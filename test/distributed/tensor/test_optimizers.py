@@ -307,6 +307,9 @@ class TestDTensorOptimizer(DTensorTestBase):
                 "eps": 1e-6,
                 "maximize": True,
             },
+            {"lr": 0.1, "fused": True},
+            {"lr": torch.tensor(0.1), "fused": True},
+            {"lr": torch.tensor([0.1]), "fused": True},
         ]
 
         for config in adagrad_configs:
@@ -613,7 +616,8 @@ class TestDTensorOptimizer(DTensorTestBase):
             )
 
     @with_comms
-    def test_admaw_fused_across_meshes(self):
+    @parametrize("optimizer_cls", [torch.optim.Adagrad, torch.optim.AdamW])
+    def test_fused_optimizer_across_meshes(self, optimizer_cls):
         mesh_shape = (2, self.world_size // 2)
         mesh_2d = init_device_mesh(
             self.device_type, mesh_shape, mesh_dim_names=("x", "y")
@@ -677,6 +681,14 @@ class TestDTensorOptimizer(DTensorTestBase):
             *fused_adamw_float_lr_configs,
             *fused_adamw_tensor_lr_configs,
         ]
+        if optimizer_cls is torch.optim.Adagrad:
+            optimizer_configs = [
+                {"lr": 0.1, "fused": True},
+                {"lr": torch.tensor(0.1), "fused": True},
+                {"lr": torch.tensor([0.1]), "fused": True},
+            ]
+        else:
+            optimizer_configs = adamw_configs
 
         # shard function to do full sharding on all parameters of a module
         def _shard_fn_2d(name, module, device_mesh):
@@ -701,9 +713,9 @@ class TestDTensorOptimizer(DTensorTestBase):
             )
             return dist_inp
 
-        for config in adamw_configs:
+        for config in optimizer_configs:
             mod = MLPModule(self.device_type)
-            opt = torch.optim.AdamW(mod.parameters(), **config)
+            opt = optimizer_cls(mod.parameters(), **config)
 
             mod_copy = deepcopy(mod)
             # MLPModule.net1 is sharded on the flatten mesh
@@ -714,7 +726,7 @@ class TestDTensorOptimizer(DTensorTestBase):
             distribute_module(
                 mod_copy.net2, mesh_2d, _shard_fn_2d, _input_fn_2d, output_fn
             )
-            dist_opt = torch.optim.AdamW(mod_copy.parameters(), **config)
+            dist_opt = optimizer_cls(mod_copy.parameters(), **config)
 
             # use ones to make sure the single machine model have the same input
             # on different ranks

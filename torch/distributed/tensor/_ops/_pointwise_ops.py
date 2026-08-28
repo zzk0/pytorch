@@ -86,11 +86,24 @@ def _is_list_op(op: OpOverload) -> bool:
     return name.startswith(("aten::_foreach_", "aten::_amp_foreach_", "aten::_fused_"))
 
 
-# The state_steps arg of fused adam / adamw is a Replicate scalar tensor, which will be put on
+# The state_steps arg of fused optimizers is a Replicate scalar tensor, which will be put on
 # the compute_mesh of an op across all parameter groups, even when not all parameter groups
-# are on the same device mesh. This idx will help avoid hitting exceptions or unnecessary
+# are on the same device mesh. These indices help avoid exceptions or unnecessary
 # redistribute during sharding propagation.
-_FUSED_OP_SCALAR_IDX = 5
+_FUSED_OP_TO_SCALAR_IDX = {
+    aten._fused_adagrad_.default: 3,
+    aten._fused_adagrad.default: 3,
+    aten._fused_adagrad_.tensor_lr: 3,
+    aten._fused_adagrad.tensor_lr: 3,
+    aten._fused_adam_.default: 5,
+    aten._fused_adam.default: 5,
+    aten._fused_adam.tensor_lr: 5,
+    aten._fused_adam_.tensor_lr: 5,
+    aten._fused_adamw_.default: 5,
+    aten._fused_adamw.default: 5,
+    aten._fused_adamw.tensor_lr: 5,
+    aten._fused_adamw_.tensor_lr: 5,
+}
 
 # Ops registered with extra Partial rules; populated by _register_single_dim_pointwise
 # when partial_extra_rules is not None, to avoid double-registration from tag discovery.
@@ -133,8 +146,9 @@ def _register_single_dim_pointwise(
     # Fused ops (e.g. _fused_adam_) have state_steps on a potentially different
     # mesh; see the note in expand_to_full_mesh_op_strategy for details.
     different_mesh_args: list[int] | None = None
-    if op.name().startswith("aten::_fused_"):
-        different_mesh_args = [_FUSED_OP_SCALAR_IDX]
+    scalar_idx = _FUSED_OP_TO_SCALAR_IDX.get(op)
+    if scalar_idx is not None:
+        different_mesh_args = [scalar_idx]
     register_single_dim_strategy(
         op,
         schema_info=schema_info,
@@ -542,6 +556,10 @@ _extra_pointwise_ops: list[OpOverload] = [
     aten._foreach_add_.Scalar,
     aten._foreach_add_.ScalarList,
     # fused optimizer ops
+    aten._fused_adagrad_.default,
+    aten._fused_adagrad.default,
+    aten._fused_adagrad_.tensor_lr,
+    aten._fused_adagrad.tensor_lr,
     aten._fused_adam_.default,
     aten._fused_adam.default,
     aten._fused_adam.tensor_lr,
